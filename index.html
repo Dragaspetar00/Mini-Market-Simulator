@@ -1,0 +1,1372 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Market Tycoon: Deluxe</title>
+    <meta name="description" content="Kendi mini marketini yönet, müşterileri memnun et ve işini büyüt!">
+    <link rel="icon" href="favicon.svg" type="image/x-icon">
+
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+        /* Market Grid */
+        .market-grid {
+            display: grid;
+            gap: 4px;
+            background-image: radial-gradient(#334155 1px, transparent 1px);
+            background-size: 20px 20px;
+            /* Extra padding to prevent entities clipping at edges */
+            padding: 4px; 
+        }
+
+        .tile {
+            position: relative;
+            transition: all 0.2s;
+        }
+        .tile.highlight-move {
+            border-color: #3b82f6;
+            background-color: rgba(59, 130, 246, 0.2);
+            cursor: pointer;
+        }
+
+        /* Customer Entity */
+        .customer-entity {
+            position: absolute;
+            width: 22px; /* Much smaller customers requested */
+            height: 22px;
+            background: #facc15;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            /* Center in 50px tile: (50-22)/2 = 14px */
+            top: 14px;
+            left: 14px;
+            transition: all 0.5s linear; /* Walking animation */
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px; 
+            pointer-events: auto; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        }
+
+        .customer-emoji {
+            transform: scale(0.9);
+        }
+
+        .customer-thief {
+            border-color: #ef4444; /* Red border for thieves */
+            background: #1e293b;
+        }
+        
+        .patience-bar {
+            position: absolute;
+            bottom: -5px;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: #ef4444;
+            border-radius: 2px;
+        }
+
+        /* Shelf Visuals */
+        .shelf-visual {
+            width: 100%;
+            height: 100%;
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            border-bottom: 4px solid rgba(0,0,0,0.2);
+            transition: transform 0.2s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .shelf-visual:hover { transform: scale(1.05); z-index: 20; cursor: pointer; }
+
+        /* Animations */
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-3px); }
+        }
+        .animate-bounce-mini { animation: bounce 1s infinite; }
+
+        .toast { animation: slideIn 0.3s ease-out forwards, fadeOut 0.5s ease-in 2.5s forwards; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+        /* Collapsible Sidebar Transition */
+        #sidebar { transition: transform 0.3s ease-in-out, width 0.3s ease-in-out; }
+        .sidebar-closed #sidebar { transform: translateX(100%); width: 0; padding: 0; overflow: hidden; }
+        .sidebar-closed #main-view { width: 100%; }
+
+        /* Checkout Mini Game Modal */
+        #checkout-modal {
+            backdrop-filter: blur(5px);
+        }
+        .scan-item {
+            /* Slower base movement so they don't rush by too fast initially, but go further */
+            animation: slideRight 5s linear forwards;
+        }
+        /* Move further right to ensure they leave frame */
+        @keyframes slideRight { from { transform: translateX(-150%); } to { transform: translateX(400%); } }
+        
+        /* Scanned animation: fast fly out */
+        .scan-item.scanned-fly {
+            animation: flyOut 0.4s ease-in forwards !important;
+        }
+        @keyframes flyOut {
+            0% { transform: translateX(0) scale(1); opacity: 1; }
+            100% { transform: translateX(200px) scale(0.5); opacity: 0; }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 h-screen flex flex-col overflow-hidden">
+
+    <!-- CHECKOUT MINI GAME OVERLAY -->
+    <div id="checkout-modal" class="hidden fixed inset-0 z-[100] bg-black/80 flex items-center justify-center">
+        <div class="bg-slate-800 p-6 rounded-xl max-w-md w-full border-2 border-slate-600 shadow-2xl relative">
+            <button onclick="Actions.closeCheckout()" class="absolute top-2 right-2 text-slate-400 hover:text-white">✖</button>
+            
+            <div class="text-center mb-4">
+                <h2 class="text-2xl font-bold text-green-400">Kasa İşlemi</h2>
+                <div class="text-sm text-slate-400">Ürünlere tıkla ve okut!</div>
+            </div>
+
+            <!-- Belt -->
+            <div class="h-24 bg-slate-900 rounded border-y-4 border-slate-700 relative overflow-hidden flex items-center mb-4" id="belt-area">
+                <!-- Items injected here -->
+                <div class="absolute w-full h-1 bg-slate-800 bottom-2 animate-pulse"></div>
+            </div>
+
+            <div class="flex justify-between items-end mb-4">
+                <div class="text-left">
+                    <div class="text-xs text-slate-500">Toplam Tutar</div>
+                    <div class="text-3xl font-mono font-bold text-white"><span id="checkout-total">0.00</span>₺</div>
+                </div>
+                <div class="text-right">
+                    <div class="text-xs text-slate-500">Müşteri Ödemesi</div>
+                    <div id="payment-method" class="font-bold text-yellow-400 text-sm">Nakit 💵</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button id="btn-pay-cash" onclick="Actions.finishTransaction('cash')" disabled class="p-3 rounded bg-green-900/50 text-slate-500 font-bold border border-green-900 transition">💵 Nakit Al</button>
+                <button id="btn-pay-card" onclick="Actions.finishTransaction('card')" disabled class="p-3 rounded bg-blue-900/50 text-slate-500 font-bold border border-blue-900 transition">💳 Kart Çek</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOP BAR -->
+    <header class="bg-slate-800 border-b border-slate-700 p-3 flex justify-between items-center shadow-lg z-30 relative">
+        <div class="flex items-center gap-6">
+            <div class="flex items-center gap-2">
+                <div class="bg-green-600 w-8 h-8 rounded flex items-center justify-center text-lg">💰</div>
+                <div>
+                    <div class="font-bold text-xl leading-none"><span id="money-display">0</span> ₺</div>
+                    <div class="text-xs text-slate-400">Seviye <span id="level-display">1</span></div>
+                </div>
+            </div>
+            
+            <div class="hidden md:flex items-center gap-4 text-sm border-l border-slate-600 pl-4">
+                <div>
+                    <div class="text-xs text-slate-400">Saat</div>
+                    <div class="font-mono font-bold text-lg text-blue-300">
+                        Gün <span id="day-display">1</span> <span id="time-display">08:00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Status Bars -->
+        <div class="flex gap-6 text-sm">
+            <div class="w-24">
+                <div class="flex justify-between text-xs mb-1">
+                    <span>🧹 Temizlik</span>
+                    <span id="clean-display">100%</span>
+                </div>
+                <div class="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div id="clean-bar" class="h-full bg-blue-500 w-full transition-all duration-500"></div>
+                </div>
+            </div>
+            <div class="w-24">
+                <div class="flex justify-between text-xs mb-1">
+                    <span>⭐ İtibar</span>
+                    <span id="rep-display">5.0</span>
+                </div>
+                <div class="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div id="rep-bar" class="h-full bg-yellow-500 w-full transition-all duration-500"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex gap-2">
+            <button onclick="Game.saveGame()" class="bg-slate-700 hover:bg-slate-600 p-2 rounded text-xs transition">💾 Kaydet</button>
+            <button onclick="UI.toggleSidebar()" class="bg-blue-600 hover:bg-blue-500 p-2 rounded text-xs font-bold transition">☰ Menü</button>
+        </div>
+    </header>
+
+    <!-- MAIN CONTENT -->
+    <div id="game-container" class="flex-1 flex overflow-hidden relative">
+        
+        <!-- LEFT: VISUAL MARKET VIEW -->
+        <main id="main-view" class="flex-1 bg-slate-950 relative overflow-hidden flex flex-col items-center justify-center transition-all duration-300">
+            
+            <!-- Floating Notifications -->
+            <div id="toast-container" class="absolute top-4 right-4 flex flex-col gap-2 pointer-events-none z-50"></div>
+
+            <!-- Layout Mode Banner -->
+            <div id="layout-banner" class="hidden absolute top-0 left-0 w-full bg-blue-600 text-white text-center text-xs py-1 font-bold z-40">
+                🛠️ DÜZENLEME MODU: Bir eşyaya tıkla, sonra boş yere tıkla.
+            </div>
+
+            <!-- Store Container (Centering Wrapper) -->
+            <div class="relative p-8 overflow-auto max-w-full max-h-full flex items-center justify-center">
+                <!-- The Grid -->
+                <div id="market-grid" class="market-grid bg-slate-800 border-8 border-slate-700 rounded shadow-2xl relative transition-all duration-500">
+                    <!-- Cells generated by JS -->
+                    <!-- Entities (Customers) overlaid by JS -->
+                </div>
+                
+                <!-- Floor Labels -->
+                <div class="absolute bottom-2 left-0 w-full text-center text-slate-500 text-xs font-bold opacity-50 pointer-events-none">
+                    MARKET ALANI
+                </div>
+            </div>
+
+            <!-- Bottom Controls -->
+            <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-40 items-end">
+                <button onclick="Actions.cleanStore()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded shadow-lg font-bold flex flex-col items-center gap-1 transition transform hover:scale-105 text-xs">
+                    <span class="text-xl">🧹</span> Temizle
+                </button>
+                
+                <button id="btn-checkout" onclick="Actions.startManualCheckout()" class="hidden bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded shadow-lg font-bold flex flex-col items-center gap-1 animate-bounce-mini">
+                    <span class="text-xl">📠</span> 
+                    <span>Kasa! (<span id="queue-count">0</span>)</span>
+                </button>
+
+                <button onclick="Actions.toggleLayoutMode()" id="btn-layout" class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded shadow-lg font-bold flex flex-col items-center gap-1 transition transform hover:scale-105 text-xs">
+                    <span class="text-xl">📐</span> Düzenle
+                </button>
+            </div>
+
+            <!-- Reviews Panel (Draggable/Floating feeling) -->
+            <div class="absolute top-4 left-4 w-64 bg-slate-900/90 backdrop-blur border border-slate-700 rounded p-3 shadow-xl z-20 pointer-events-none">
+                <h4 class="text-xs font-bold text-slate-400 uppercase mb-2 border-b border-slate-700 pb-1">Son Müşteri Yorumları</h4>
+                <div id="reviews-list" class="space-y-2 text-xs">
+                    <div class="text-slate-500 italic">Henüz yorum yok...</div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- RIGHT: MANAGEMENT SIDEBAR -->
+        <aside id="sidebar" class="w-96 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl z-40 absolute right-0 h-full md:relative">
+            <!-- Tabs -->
+            <div class="flex border-b border-slate-800 bg-slate-950">
+                <button onclick="UI.switchTab('shelf')" class="tab-btn flex-1 p-4 text-sm font-bold hover:bg-slate-800 transition-colors text-blue-400 border-b-2 border-blue-400" data-tab="shelf">🏪 Raf</button>
+                <button onclick="UI.switchTab('supply')" class="tab-btn flex-1 p-4 text-sm font-bold hover:bg-slate-800 transition-colors text-slate-400" data-tab="supply">📦 Stok</button>
+                <button onclick="UI.switchTab('staff')" class="tab-btn flex-1 p-4 text-sm font-bold hover:bg-slate-800 transition-colors text-slate-400" data-tab="staff">👥 Ekip</button>
+                <button onclick="UI.switchTab('upgrade')" class="tab-btn flex-1 p-4 text-sm font-bold hover:bg-slate-800 transition-colors text-slate-400" data-tab="upgrade">📈 Büyüt</button>
+            </div>
+
+            <!-- Content -->
+            <div class="flex-1 overflow-y-auto p-4 bg-slate-900 scroll-smooth" id="panel-content">
+                
+                <!-- SHELF TAB -->
+                <div id="tab-shelf" class="space-y-4">
+                    <div class="bg-blue-900/20 p-3 rounded border border-blue-800 text-xs text-blue-200">
+                        💡 İpucu: Fiyatı artırırsan müşteri azalır ama kar artar.
+                    </div>
+                    
+                    <div id="shelf-list" class="space-y-3">
+                        <!-- Shelf Management Cards JS -->
+                    </div>
+                    <button onclick="Actions.buyShelf()" class="w-full py-3 border-2 border-dashed border-slate-600 text-slate-500 hover:border-green-500 hover:text-green-500 rounded text-xs font-bold transition">
+                        + Yeni Raf Satın Al (300 ₺)
+                    </button>
+                </div>
+
+                <!-- SUPPLY TAB -->
+                <div id="tab-supply" class="hidden space-y-4">
+                    <div class="grid grid-cols-2 gap-2 text-xs mb-2">
+                        <div class="bg-slate-800 p-2 rounded border border-slate-700">
+                            <div class="text-slate-400">📦 Depo Doluluk</div>
+                            <div class="font-bold text-lg"><span id="storage-used">0</span> / <span id="storage-cap">50</span></div>
+                        </div>
+                        <div class="bg-slate-800 p-2 rounded border border-slate-700">
+                            <div class="text-slate-400">🚚 Bekleyen</div>
+                            <div class="font-bold text-lg" id="pending-orders">0</div>
+                        </div>
+                    </div>
+
+                    <div id="product-catalog" class="space-y-2">
+                        <!-- Products JS -->
+                    </div>
+                </div>
+
+                <!-- STAFF TAB -->
+                <div id="tab-staff" class="hidden space-y-4">
+                    <h3 class="font-bold text-lg text-purple-400">Personel Yönetimi</h3>
+                    <p class="text-xs text-slate-400">Güvenlik hırsızları yakalar, Kasiyer otomatik çalışır.</p>
+                    
+                    <div id="staff-roster" class="space-y-3 mt-4">
+                        <!-- Staff Cards JS -->
+                    </div>
+                </div>
+
+                <!-- UPGRADE TAB -->
+                <div id="tab-upgrade" class="hidden space-y-5">
+                    
+                    <!-- Expand Store -->
+                    <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 shadow-lg relative overflow-hidden group">
+                        <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition text-6xl">🏗️</div>
+                        <h3 class="font-bold text-lg text-amber-400">Dükkanı Genişlet</h3>
+                        <p class="text-xs text-slate-400 mb-3">Daha fazla raf ve müşteri alanı için alanı büyüt.</p>
+                        <div class="flex justify-between items-center mt-2">
+                            <div class="text-xs">Şu an: <span id="grid-size-disp">4x4</span></div>
+                            <button onclick="Actions.expandStore()" class="bg-amber-600 hover:bg-amber-500 text-slate-900 font-bold px-4 py-2 rounded text-xs shadow">
+                                Genişlet (<span id="expand-cost">2000</span>₺)
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Ads -->
+                    <div class="space-y-2">
+                        <h4 class="font-bold text-sm text-slate-300 border-b border-slate-700 pb-1">Reklam & Pazarlama</h4>
+                        <button onclick="Actions.runAd('flyer')" class="w-full bg-slate-800 hover:bg-slate-700 p-3 rounded flex justify-between items-center border border-slate-700">
+                            <div class="text-left">
+                                <div class="font-bold text-sm">El İlanı</div>
+                                <div class="text-xs text-slate-400">+%20 Müşteri Hızı (1 Dakika)</div>
+                            </div>
+                            <div class="font-bold text-green-400">150₺</div>
+                        </button>
+                        <button onclick="Actions.runAd('influencer')" class="w-full bg-slate-800 hover:bg-slate-700 p-3 rounded flex justify-between items-center border border-slate-700">
+                            <div class="text-left">
+                                <div class="font-bold text-sm text-pink-400">Influencer</div>
+                                <div class="text-xs text-slate-400">Müşteri Akını! (30 Sn)</div>
+                            </div>
+                            <div class="font-bold text-green-400">750₺</div>
+                        </button>
+                    </div>
+
+                    <!-- Rivals Info -->
+                    <div class="bg-red-900/20 p-3 rounded border border-red-900/50">
+                        <h4 class="font-bold text-sm text-red-400">Rakip Analizi</h4>
+                        <div id="rival-status" class="text-xs text-slate-400 mt-1">Sakin.</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- LOGIC -->
+    <script>
+        // --- DATA CONFIG ---
+        const Products = {
+            bread:    { name: 'Ekmek',    buy: 4,  baseSell: 6,  unlock: 1, icon: '🍞', color: 'bg-orange-200 text-orange-900' },
+            water:    { name: 'Su',       buy: 2,  baseSell: 4,  unlock: 1, icon: '💧', color: 'bg-blue-200 text-blue-900' },
+            chips:    { name: 'Cips',     buy: 12, baseSell: 20, unlock: 2, icon: '🍟', color: 'bg-red-200 text-red-900' },
+            milk:     { name: 'Süt',      buy: 15, baseSell: 24, unlock: 2, icon: '🥛', color: 'bg-slate-200 text-slate-900' },
+            fruit:    { name: 'Elma',     buy: 6,  baseSell: 12, unlock: 3, icon: '🍎', color: 'bg-green-200 text-green-900' },
+            choco:    { name: 'Çikolata', buy: 8,  baseSell: 15, unlock: 3, icon: '🍫', color: 'bg-amber-800 text-amber-100' },
+            soda:     { name: 'Kola',     buy: 10, baseSell: 18, unlock: 4, icon: '🥤', color: 'bg-red-600 text-white' },
+            chicken:  { name: 'Tavuk',    buy: 40, baseSell: 65, unlock: 5, icon: '🍗', color: 'bg-yellow-700 text-yellow-100' },
+            detergent:{ name: 'Deterjan', buy: 25, baseSell: 45, unlock: 6, icon: '🧼', color: 'bg-purple-200 text-purple-900' },
+        };
+
+        const InitialState = {
+            money: 300,
+            day: 1,
+            hour: 8,
+            level: 1,
+            xp: 0,
+            cleanliness: 100,
+            reputation: 4.5, // 0-5 stars
+            grid: { w: 5, h: 5 }, 
+            storage: { cap: 50, items: {} },
+            shelves: [
+                { id: 's1', x: 1, y: 1, type: 'bread', stock: 5, max: 10, price: 6 },
+                { id: 's2', x: 1, y: 3, type: 'water', stock: 5, max: 10, price: 4 }
+            ],
+            checkoutPos: { x: 3, y: 3 },
+            staff: { cashier: 0, cleaner: 0, security: 0 },
+            reviews: [],
+            ads: [],
+            rivalEvent: null
+        };
+
+        let State = JSON.parse(JSON.stringify(InitialState));
+        let Customers = []; 
+        let GameLoopId, AnimLoopId;
+        let LastFrameTime = 0;
+        
+        // UI State
+        let LayoutMode = false;
+        let SelectedItem = null;
+        let CheckoutActive = false;
+        let CurrentTransaction = null;
+
+        // --- CORE SYSTEMS ---
+
+        const Game = {
+            init: () => {
+                Game.loadGame();
+                UI.init();
+                GameLoopId = setInterval(Game.logicTick, 1000);
+                AnimLoopId = requestAnimationFrame(Game.animLoop);
+            },
+
+            logicTick: () => {
+                // Time
+                State.hour += 0.2; 
+                if (State.hour >= 24) {
+                    State.hour = 0;
+                    State.day++;
+                    Game.dailyReset();
+                }
+
+                // Spawning
+                Game.trySpawnCustomer();
+
+                // Queue Patience & Decay
+                Customers.forEach(c => {
+                    if(c.state === 'queueing') {
+                        c.patience -= 1;
+                        if(c.patience <= 0) {
+                            c.state = 'leaving_angry';
+                            c.basket = []; // Drops basket
+                            c.basketTotal = 0;
+                            Actions.addReview(c.type.emoji, 1, "Sıra çok yavaş! Bıraktım her şeyi.");
+                            UI.toast("Müşteri sıradan sıkılıp gitti!", "error");
+                            State.reputation = Math.max(0, State.reputation - 0.1);
+                        }
+                    }
+                });
+
+                // Staff Logic
+                if(State.staff.cleaner > 0 && State.cleanliness < 95) {
+                    State.cleanliness += 3; 
+                }
+                
+                // Security Logic (Auto-catch thieves)
+                if(State.staff.security > 0) {
+                    const thief = Customers.find(c => c.type.id === 'thief' && c.state !== 'caught' && c.state !== 'leaving');
+                    if(thief && Math.random() < 0.4) { // 40% chance per tick to spot
+                        Actions.catchThief(thief.id);
+                    }
+                }
+
+                // Dirt
+                if(Customers.length > 0 && Math.random() > 0.7) {
+                    State.cleanliness -= 0.5;
+                }
+                State.cleanliness = Math.max(0, Math.min(100, State.cleanliness));
+
+                UI.updateStats();
+            },
+
+            animLoop: (timestamp) => {
+                const dt = timestamp - LastFrameTime;
+                LastFrameTime = timestamp;
+                Customers.forEach(c => CustomerAI.update(c));
+                Customers = Customers.filter(c => c.state !== 'finished');
+                UI.renderEntities();
+                AnimLoopId = requestAnimationFrame(Game.animLoop);
+            },
+
+            trySpawnCustomer: () => {
+                let chance = 0.2;
+                if (State.cleanliness < 50) chance -= 0.1;
+                if (State.reputation > 4.5) chance += 0.1;
+                const activeAd = State.ads.find(a => a.expires > Date.now());
+                if (activeAd) chance += (activeAd.type === 'influencer' ? 0.5 : 0.2);
+                if (State.rivalEvent) chance *= State.rivalEvent.effect;
+                
+                // Queue Cap
+                const qCount = Customers.filter(c => c.state === 'queueing').length;
+                if(qCount > 5) chance = 0; // Too crowded
+
+                const maxCustomers = State.grid.w * State.grid.h / 2;
+
+                if (Customers.length < maxCustomers && Math.random() < chance) {
+                    CustomerAI.spawn();
+                }
+            },
+
+            dailyReset: () => {
+                const wages = (State.staff.cashier * 60) + (State.staff.cleaner * 50) + (State.staff.security * 70);
+                if (wages > 0) {
+                    if(State.money >= wages) {
+                        State.money -= wages;
+                        UI.toast(`Günlük maaşlar: -${wages}₺`);
+                    } else {
+                        UI.toast("Maaş ödenemedi! Personel mutsuz.", "error");
+                    }
+                }
+                Game.saveGame();
+                UI.toast(`Gün ${State.day} başladı!`);
+            },
+
+            saveGame: () => {
+                localStorage.setItem('mmt_save_v2', JSON.stringify(State));
+                localStorage.setItem('mmt_time_v2', Date.now());
+                UI.toast('Oyun kaydedildi.');
+            },
+
+            loadGame: () => {
+                const save = localStorage.getItem('mmt_save_v2');
+                const time = localStorage.getItem('mmt_time_v2');
+
+                if (save) {
+                    try {
+                        const loaded = JSON.parse(save);
+                        State = { ...InitialState, ...loaded, grid: loaded.grid || InitialState.grid };
+                        // Fix old saves missing price
+                        State.shelves.forEach(s => {
+                            if(s.type && !s.price) s.price = Products[s.type].baseSell;
+                        });
+                        // AFK logic
+                        if (time && State.staff.cashier > 0) {
+                            const diffSecs = (Date.now() - parseInt(time)) / 1000;
+                            if (diffSecs > 60) Game.calculateOfflineEarnings(diffSecs);
+                        }
+                    } catch(e) { console.error("Save corrupted", e); }
+                }
+                UI.renderGridStatic(); 
+            },
+
+            calculateOfflineEarnings: (seconds) => {
+                // Simple simulation: Can only sell what is in stock
+                let earned = 0;
+                let soldCount = 0;
+                const maxSales = Math.floor(seconds / 20); // 1 sale every 20s per shelf
+
+                State.shelves.forEach(s => {
+                    if(s.type && s.stock > 0) {
+                        const amount = Math.min(s.stock, maxSales);
+                        s.stock -= amount;
+                        earned += amount * s.price;
+                        soldCount += amount;
+                    }
+                });
+                
+                if(earned > 0) {
+                    State.money += earned;
+                    alert(`Hoşgeldin Patron!\nKasiyer sen yokken ${soldCount} ürün sattı.\nKazanç: ${earned}₺`);
+                }
+            }
+        };
+
+        // --- CUSTOMER AI ---
+
+        const CustomerAI = {
+            spawn: () => {
+                const isThief = Math.random() < 0.02;
+                
+                const types = [
+                    { id: 'kid', emoji: '👦', speed: 0.04, patience: 200, wallet: 30 },
+                    { id: 'granny', emoji: '👵', speed: 0.02, patience: 400, wallet: 50 },
+                    { id: 'biz', emoji: '👩‍💼', speed: 0.06, patience: 150, wallet: 100 },
+                    { id: 'punk', emoji: '😎', speed: 0.05, patience: 180, wallet: 40 },
+                    { id: 'thief', emoji: '🥷', speed: 0.06, patience: 999, wallet: 0 }
+                ];
+                
+                const type = isThief ? types[4] : types[Math.floor(Math.random() * (types.length - 1))];
+                
+                Customers.push({
+                    id: Date.now() + Math.random(),
+                    type: type,
+                    x: 0, y: 0, 
+                    targetX: 0, targetY: 0,
+                    state: 'entering', 
+                    basket: [],
+                    basketTotal: 0,
+                    targetShelfId: null,
+                    patience: type.patience,
+                    maxPatience: type.patience,
+                    paymentMethod: Math.random() > 0.5 ? 'cash' : 'card'
+                });
+            },
+
+            updateQueuePos: (c) => {
+                // Queue Logic: Form a line relative to checkout
+                // Find my place in line
+                const queue = Customers.filter(cust => cust.state === 'queueing');
+                const myIndex = queue.findIndex(q => q.id === c.id);
+                const idx = myIndex === -1 ? queue.length : myIndex;
+
+                // Check where checkout is and determine queue direction
+                // Default: Queue grows Down (y+)
+                let dirX = 0; 
+                let dirY = 1;
+                
+                // If checkout is at bottom edge, grow Up (y-)
+                if(State.checkoutPos.y > State.grid.h - 3) {
+                    dirY = -1;
+                }
+                // If checkout is at right edge, grow Left (x-)
+                // (Override Y if needed or shift X)
+                // To allow 2-block wide checkout, we assume checkout is at (x,y) and (x+1, y)
+                // Queue should form at (x, y +/- 1) OR (x+1, y +/- 1)
+                
+                // Simplified: Queue forms at State.checkoutPos.x, y + dirY * (idx+1)
+                let qX = State.checkoutPos.x;
+                let qY = State.checkoutPos.y + (dirY * (1 + (idx * 0.6))); // 0.6 for tighter packing
+
+                // Bounds check
+                qX = Math.max(0, Math.min(State.grid.w - 1, qX));
+                qY = Math.max(0, Math.min(State.grid.h - 1, qY));
+                
+                c.targetX = qX;
+                c.targetY = qY;
+            },
+
+            update: (c) => {
+                if(c.state === 'caught') return;
+
+                // Re-eval queue position if queueing (to move up line)
+                if(c.state === 'queueing') CustomerAI.updateQueuePos(c);
+
+                const speed = c.type.speed * (State.ads.some(a => a.type === 'flyer' && a.expires > Date.now()) ? 1.2 : 1);
+                
+                const dx = c.targetX - c.x;
+                const dy = c.targetY - c.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+
+                if(dist > 0.1) {
+                    c.x += (dx / dist) * speed;
+                    c.y += (dy / dist) * speed;
+                } else {
+                    c.x = c.targetX;
+                    c.y = c.targetY;
+                    CustomerAI.logic(c);
+                }
+            },
+
+            logic: (c) => {
+                switch(c.state) {
+                    case 'entering':
+                        if(c.type.id === 'thief') {
+                            // Thief visits 1-2 random stocked shelves then tries to leave
+                            const stockedShelves = State.shelves.filter(s => s.stock > 0);
+                            if(stockedShelves.length > 0) {
+                                const s = stockedShelves[Math.floor(Math.random() * stockedShelves.length)];
+                                c.targetShelfId = s.id;
+                                c.targetX = s.x; c.targetY = s.y;
+                                c.state = 'moving_to_shelf';
+                            } else {
+                                c.state = 'leaving';
+                                c.targetX = 0; c.targetY = 0;
+                            }
+                            return;
+                        }
+
+                        // Normal logic
+                        const validShelves = State.shelves.filter(s => {
+                            if(!s.type || s.stock <= 0) return false;
+                            const p = Products[s.type];
+                            // Price Check: If price > 1.5x base, 50% chance to skip
+                            if(s.price > p.baseSell * 1.5 && Math.random() > 0.5) return false;
+                            return (s.price <= c.type.wallet - c.basketTotal);
+                        });
+                        
+                        if(validShelves.length > 0 && Math.random() > 0.1) {
+                            const shelf = validShelves[Math.floor(Math.random() * validShelves.length)];
+                            c.targetShelfId = shelf.id;
+                            c.targetX = shelf.x;
+                            c.targetY = shelf.y;
+                            c.state = 'moving_to_shelf';
+                        } else {
+                            c.state = 'moving_to_checkout';
+                            // Determine queue start point (logic handles position)
+                            c.targetX = State.checkoutPos.x;
+                            c.targetY = State.checkoutPos.y;
+                        }
+                        break;
+
+                    case 'moving_to_shelf':
+                        c.state = 'shopping';
+                        setTimeout(() => {
+                            const shelf = State.shelves.find(s => s.id === c.targetShelfId);
+                            if(shelf && shelf.stock > 0) {
+                                shelf.stock--;
+                                const p = Products[shelf.type];
+                                c.basket.push({ ...p, price: shelf.price });
+                                c.basketTotal += shelf.price;
+                            }
+                            if(c.type.id === 'thief' && c.basket.length > 0) {
+                                c.state = 'leaving'; 
+                                c.targetX = 0; c.targetY = 0;
+                            } else {
+                                c.state = 'entering';
+                            }
+                            UI.renderShelves();
+                        }, 500);
+                        break;
+
+                    case 'moving_to_checkout':
+                        if(c.basket.length === 0) {
+                            c.state = 'leaving';
+                            c.targetX = 0; c.targetY = 0;
+                        } else {
+                            c.state = 'queueing';
+                            // Set initial queue position logic
+                            CustomerAI.updateQueuePos(c);
+                        }
+                        break;
+
+                    case 'leaving':
+                    case 'leaving_angry':
+                        c.state = 'finished';
+                        break;
+                }
+            }
+        };
+
+        const Actions = {
+            cleanStore: () => {
+                State.cleanliness = Math.min(100, State.cleanliness + 20);
+                UI.updateStats();
+                UI.toast("Yerleri sildin (+20 Temizlik)");
+            },
+
+            // --- THIEF & SECURITY ---
+            catchThief: (id) => {
+                const c = Customers.find(cust => cust.id === id);
+                if(c && c.type.id === 'thief' && c.state !== 'caught' && c.state !== 'finished') {
+                    c.state = 'caught';
+                    UI.toast("HIRSIZ YAKALANDI! +50₺ Ödül", "success");
+                    
+                    // Return items logic is simulated by reward
+                    State.money += 50; // Reward
+                    State.xp += 20;
+
+                    setTimeout(() => {
+                        c.state = 'finished'; // Kick out
+                    }, 1000);
+                }
+            },
+
+            // --- CHECKOUT MINI GAME ---
+            startManualCheckout: () => {
+                if(CheckoutActive) return;
+                
+                const queue = Customers.filter(c => c.state === 'queueing');
+                if(queue.length === 0) return;
+
+                CurrentTransaction = queue[0]; // First in line
+                Actions.openCheckoutGame(CurrentTransaction);
+            },
+
+            openCheckoutGame: (customer) => {
+                CheckoutActive = true;
+                const modal = document.getElementById('checkout-modal');
+                modal.classList.remove('hidden');
+                
+                // Setup UI
+                document.getElementById('checkout-total').innerText = "0.00";
+                document.getElementById('payment-method').innerText = customer.paymentMethod === 'cash' ? '💵 Nakit' : '💳 Kart';
+                document.getElementById('btn-pay-cash').disabled = true;
+                document.getElementById('btn-pay-card').disabled = true;
+                document.getElementById('btn-pay-cash').classList.add('opacity-50');
+                document.getElementById('btn-pay-card').classList.add('opacity-50');
+
+                // Generate items
+                const belt = document.getElementById('belt-area');
+                belt.innerHTML = '<div class="absolute w-full h-1 bg-slate-800 bottom-2 animate-pulse"></div>'; 
+                
+                let scannedTotal = 0;
+                let scannedCount = 0;
+
+                customer.basket.forEach((item, index) => {
+                    const el = document.createElement('div');
+                    el.className = "absolute text-4xl cursor-pointer hover:scale-110 transition scan-item select-none z-10 p-2";
+                    el.innerText = item.icon;
+                    el.style.left = "10px"; 
+                    // Increased delay to prevent overlapping
+                    el.style.animationDelay = (index * 1.5) + "s"; 
+                    // Randomize vertical slightly to look more natural
+                    el.style.bottom = (15 + Math.random() * 20) + "px";
+
+                    el.onclick = (e) => {
+                        if(el.dataset.scanned) return;
+                        el.dataset.scanned = "true";
+                        
+                        // Fly away animation
+                        el.classList.add('scanned-fly');
+                        
+                        scannedTotal += item.price;
+                        scannedCount++;
+                        document.getElementById('checkout-total').innerText = scannedTotal.toFixed(2);
+
+                        if(scannedCount === customer.basket.length) {
+                            const btnId = customer.paymentMethod === 'cash' ? 'btn-pay-cash' : 'btn-pay-card';
+                            const btn = document.getElementById(btnId);
+                            btn.disabled = false;
+                            btn.classList.remove('opacity-50');
+                            btn.classList.add('ring-4', 'ring-white', 'animate-bounce');
+                        }
+                    };
+                    belt.appendChild(el);
+                });
+            },
+
+            finishTransaction: (method) => {
+                if(!CurrentTransaction) return;
+                if(method !== CurrentTransaction.paymentMethod) {
+                    UI.toast("Yanlış ödeme yöntemi!", "error");
+                    return;
+                }
+
+                const c = CurrentTransaction;
+                State.money += c.basketTotal;
+                State.xp += 10;
+                Actions.checkLevelUp();
+
+                // Review
+                const rating = Math.min(5, Math.max(1, 
+                    3 + (State.cleanliness > 80 ? 1 : 0) + (c.patience > c.maxPatience/2 ? 1 : -1)
+                ));
+                State.reputation = (State.reputation * 0.9) + (rating * 0.1);
+                Actions.addReview(c.type.emoji, rating);
+
+                // Reset
+                Actions.closeCheckout();
+                c.state = 'leaving';
+                c.targetX = 0; c.targetY = 0;
+                UI.updateStats();
+                UI.toast(`Satış: +${c.basketTotal}₺`);
+            },
+
+            closeCheckout: () => {
+                document.getElementById('checkout-modal').classList.add('hidden');
+                CheckoutActive = false;
+                CurrentTransaction = null;
+            },
+
+            addReview: (icon, stars, textOverride=null) => {
+                const texts = [
+                    "Harika market!", "Fiyatlar uygundu.", "Çok pisti...", "Kasa çok hızlı!", "Aradığımı bulamadım."
+                ];
+                let text = textOverride;
+                if(!text) text = stars < 3 ? texts[2] : (stars > 4 ? texts[0] : texts[1]);
+                
+                const review = { icon, stars: stars.toFixed(1), text, id: Date.now() };
+                State.reviews.unshift(review);
+                if(State.reviews.length > 5) State.reviews.pop();
+                UI.renderReviews();
+            },
+
+            // --- LAYOUT & EXPANSION ---
+            
+            toggleLayoutMode: () => {
+                LayoutMode = !LayoutMode;
+                document.getElementById('layout-banner').classList.toggle('hidden');
+                SelectedItem = null;
+                UI.renderGridStatic();
+            },
+
+            handleGridClick: (x, y) => {
+                if(!LayoutMode) return;
+
+                const clickedShelf = State.shelves.find(s => s.x === x && s.y === y);
+                const isCheckout = (State.checkoutPos.x === x && State.checkoutPos.y === y);
+
+                if(SelectedItem) {
+                    // Try to move SelectedItem to (x,y)
+                    // Check if empty
+                    const occupied = State.shelves.some(s => s.x === x && s.y === y) || (State.checkoutPos.x === x && State.checkoutPos.y === y) || (x===0 && y===0);
+                    
+                    if(!occupied) {
+                        if(SelectedItem.type === 'checkout') {
+                            State.checkoutPos.x = x;
+                            State.checkoutPos.y = y;
+                        } else {
+                            // Shelf
+                            const s = State.shelves.find(shelf => shelf.id === SelectedItem.id);
+                            s.x = x; 
+                            s.y = y;
+                        }
+                        UI.toast("Taşındı!");
+                    } else {
+                        UI.toast("Orası dolu!", "error");
+                    }
+                    SelectedItem = null;
+                    UI.renderGridStatic();
+
+                } else {
+                    // Select something
+                    if(clickedShelf) {
+                        SelectedItem = { type: 'shelf', id: clickedShelf.id };
+                        UI.renderGridStatic(); // Highlights
+                    } else if(isCheckout) {
+                        SelectedItem = { type: 'checkout' };
+                        UI.renderGridStatic();
+                    }
+                }
+            },
+
+            checkLevelUp: () => {
+                const needed = State.level * 100;
+                if(State.xp >= needed) {
+                    State.level++;
+                    State.xp = 0;
+                    UI.toast(`SEVİYE ATLADIN! Seviye ${State.level}`, "success");
+                    UI.renderSupply(); // Update unlocks
+                }
+                document.getElementById('level-display').innerText = State.level;
+            },
+
+            buyShelf: () => {
+                if(State.money >= 300) {
+                    // Find empty spot
+                    let found = false;
+                    for(let y=0; y<State.grid.h; y++) {
+                        for(let x=0; x<State.grid.w; x++) {
+                            if(x===0 && y===0) continue;
+                            if(x===State.checkoutPos.x && y===State.checkoutPos.y) continue;
+                            if(!State.shelves.some(s => s.x === x && s.y === y)) {
+                                State.money -= 300;
+                                State.shelves.push({
+                                    id: 's'+Date.now(), x, y, type: null, stock: 0, max: 10, price: 0
+                                });
+                                found = true;
+                                break;
+                            }
+                        }
+                        if(found) break;
+                    }
+                    
+                    if(found) {
+                        UI.renderGridStatic();
+                        UI.renderShelves();
+                        UI.updateStats();
+                    } else {
+                        UI.toast("Yer yok! Dükkanı genişlet.", "error");
+                    }
+                } else {
+                    UI.toast("Para yetersiz (300₺)", "error");
+                }
+            },
+
+            setPrice: (id, newPrice) => {
+                const s = State.shelves.find(shelf => shelf.id === id);
+                if(s) s.price = parseFloat(newPrice);
+            },
+
+            restockShelf: (id) => {
+                const shelf = State.shelves.find(s => s.id === id);
+                if(!shelf.type) return;
+                const inStorage = State.storage.items[shelf.type] || 0;
+                if(inStorage > 0) {
+                    const amount = Math.min(shelf.max - shelf.stock, inStorage);
+                    State.storage.items[shelf.type] -= amount;
+                    shelf.stock += amount;
+                    UI.renderShelves();
+                    UI.updateStats();
+                } else {
+                    UI.toast("Depoda ürün yok!", "error");
+                }
+            },
+
+            assignShelf: (id, type) => {
+                const shelf = State.shelves.find(s => s.id === id);
+                shelf.type = type;
+                shelf.stock = 0; // Reset stock on change
+                shelf.price = Products[type].baseSell; // Reset price
+                UI.renderShelves();
+                UI.renderGridStatic(); 
+            },
+
+            orderProduct: (type) => {
+                const p = Products[type];
+                const cost = p.buy * 10;
+                let currentLoad = 0;
+                for(let k in State.storage.items) currentLoad += State.storage.items[k];
+                
+                if(currentLoad + 10 > State.storage.cap) {
+                    UI.toast("Depo dolu!", "error");
+                    return;
+                }
+
+                if(State.money >= cost) {
+                    State.money -= cost;
+                    const el = document.getElementById('pending-orders');
+                    el.innerText = parseInt(el.innerText) + 1;
+                    UI.toast("Sipariş verildi (5sn)");
+                    UI.updateStats();
+                    setTimeout(() => {
+                        if(!State.storage.items[type]) State.storage.items[type] = 0;
+                        State.storage.items[type] += 10;
+                        el.innerText = Math.max(0, parseInt(el.innerText) - 1);
+                        UI.renderSupply(); 
+                        UI.toast(`${p.name} teslim edildi!`);
+                    }, 5000);
+                } else {
+                    UI.toast("Para yetersiz", "error");
+                }
+            },
+
+            hire: (role) => {
+                const costs = { cashier: 800, cleaner: 600, security: 1000 };
+                if(State.staff[role] > 0) {
+                    UI.toast("Zaten var", "error");
+                    return;
+                }
+                if(State.money >= costs[role]) {
+                    State.money -= costs[role];
+                    State.staff[role] = 1;
+                    UI.renderStaff();
+                    UI.updateStats();
+                    UI.toast("İşe alım başarılı!");
+                } else {
+                    UI.toast("Para yetersiz", "error");
+                }
+            },
+
+            expandStore: () => {
+                const cost = State.grid.w * 500;
+                if(State.money >= cost) {
+                    State.money -= cost;
+                    State.grid.w += 1;
+                    State.grid.h += 1;
+                    State.checkoutPos = { x: State.grid.w - 2, y: State.grid.h - 2 };
+                    UI.renderGridStatic();
+                    UI.updateStats();
+                    UI.toast("Dükkan büyütüldü!");
+                } else {
+                    UI.toast("Para yetersiz", "error");
+                }
+            },
+
+            runAd: (type) => {
+                const costs = { flyer: 150, influencer: 750 };
+                if(State.money >= costs[type]) {
+                    State.money -= costs[type];
+                    const duration = type === 'flyer' ? 60000 : 30000;
+                    State.ads.push({ type, expires: Date.now() + duration });
+                    UI.updateStats();
+                    UI.toast("Reklam başladı!");
+                } else {
+                    UI.toast("Para yetersiz", "error");
+                }
+            }
+        };
+
+        const UI = {
+            init: () => {
+                UI.renderGridStatic();
+                UI.renderShelves();
+                UI.renderSupply();
+                UI.renderStaff();
+                UI.renderReviews();
+                UI.updateStats();
+                document.getElementById('level-display').innerText = State.level;
+            },
+
+            toggleSidebar: () => {
+                document.body.classList.toggle('sidebar-closed');
+            },
+
+            switchTab: (tab) => {
+                document.querySelectorAll('.tab-btn').forEach(b => {
+                    if(b.dataset.tab === tab) b.classList.add('text-blue-400', 'border-b-2', 'border-blue-400');
+                    else b.classList.remove('text-blue-400', 'border-b-2', 'border-blue-400');
+                });
+                document.querySelectorAll('#panel-content > div').forEach(d => d.classList.add('hidden'));
+                document.getElementById('tab-'+tab).classList.remove('hidden');
+            },
+
+            updateStats: () => {
+                document.getElementById('money-display').innerText = Math.floor(State.money);
+                document.getElementById('day-display').innerText = State.day;
+                const h = Math.floor(State.hour);
+                document.getElementById('time-display').innerText = `${h < 10 ? '0'+h : h}:00`;
+                
+                document.getElementById('clean-display').innerText = Math.floor(State.cleanliness) + '%';
+                document.getElementById('clean-bar').style.width = State.cleanliness + '%';
+                document.getElementById('clean-bar').className = `h-full transition-all duration-500 ${State.cleanliness < 50 ? 'bg-red-500' : 'bg-blue-500'}`;
+
+                document.getElementById('rep-display').innerText = State.reputation.toFixed(1);
+                document.getElementById('rep-bar').style.width = (State.reputation / 5 * 100) + '%';
+
+                // Checkout Button Logic
+                const queueCount = Customers.filter(c => c.state === 'queueing').length;
+                const btn = document.getElementById('btn-checkout');
+                document.getElementById('queue-count').innerText = queueCount;
+                
+                // Auto cashier Logic runs in LogicTick to avoid visual flicker, but visual feedback is handled here
+                if(queueCount > 0 && State.staff.cashier > 0 && Math.random() > 0.9) {
+                    // Helper visualization or just logic in tick
+                }
+
+                // Button Visibility
+                if(queueCount > 0 && State.staff.cashier === 0) {
+                    btn.classList.remove('hidden');
+                } else if (State.staff.cashier === 0) {
+                    btn.classList.add('hidden');
+                } else {
+                    // If staff exists, button hidden
+                     btn.classList.add('hidden');
+                }
+
+                const cost = State.grid.w * 500;
+                document.getElementById('expand-cost').innerText = cost;
+                document.getElementById('grid-size-disp').innerText = `${State.grid.w}x${State.grid.h}`;
+            },
+
+            renderGridStatic: () => {
+                const grid = document.getElementById('market-grid');
+                grid.style.gridTemplateColumns = `repeat(${State.grid.w}, 50px)`;
+                grid.style.gridTemplateRows = `repeat(${State.grid.h}, 50px)`;
+                grid.innerHTML = ''; 
+
+                for(let y=0; y<State.grid.h; y++) {
+                    for(let x=0; x<State.grid.w; x++) {
+                        const cell = document.createElement('div');
+                        cell.className = "tile w-[50px] h-[50px] border border-slate-700/50";
+                        cell.onclick = () => Actions.handleGridClick(x, y);
+                        
+                        // Highlight if moving
+                        if(LayoutMode && SelectedItem) {
+                            cell.classList.add('highlight-move');
+                        }
+
+                        if(x===0 && y===0) {
+                            cell.classList.add('bg-green-900/30');
+                            cell.innerHTML = '<div class="text-[10px] text-green-400 w-full text-center absolute bottom-1">GİRİŞ</div>';
+                        }
+                        else if(x === State.checkoutPos.x && y === State.checkoutPos.y) {
+                            // Visual 2-block checkout render
+                            // We render it on the anchor tile, but apply overflow styles
+                            const isSelected = LayoutMode && SelectedItem && SelectedItem.type === 'checkout';
+                            cell.className += ` relative z-20 ${isSelected ? 'border-2 border-white' : ''}`;
+                            // Width is 2 tiles (50*2 + gap) = 104px
+                            cell.innerHTML = `
+                                <div class="absolute top-0 left-0 h-[50px] w-[104px] bg-slate-700 border-2 border-yellow-500/50 rounded flex items-center justify-between px-2 shadow-xl pointer-events-none">
+                                    <span class="text-xl">📠</span>
+                                    <span class="text-xs font-bold text-slate-400">KASA</span>
+                                </div>
+                            `;
+                            // Hack: Since this div is absolute and wider, it covers the next tile visually
+                        } else {
+                            const shelf = State.shelves.find(s => s.x === x && s.y === y);
+                            if(shelf) {
+                                const p = shelf.type ? Products[shelf.type] : null;
+                                const bg = p ? p.color : 'bg-slate-700';
+                                const isSelected = LayoutMode && SelectedItem && SelectedItem.id === shelf.id;
+                                cell.innerHTML = `
+                                    <div class="shelf-visual ${bg} shadow-lg ${isSelected ? 'ring-2 ring-white' : ''}" onclick="if(!LayoutMode) UI.switchTab('shelf')">
+                                        <div class="text-lg">${p ? p.icon : '📦'}</div>
+                                        ${p ? `<div class="font-bold">${shelf.stock}</div>` : '<div class="text-[8px]">BOŞ</div>'}
+                                    </div>
+                                `;
+                            }
+                        }
+                        grid.appendChild(cell);
+                    }
+                }
+            },
+
+            renderEntities: () => {
+                const grid = document.getElementById('market-grid');
+                const oldEntities = document.querySelectorAll('.customer-entity');
+                oldEntities.forEach(e => e.remove());
+
+                Customers.forEach(c => {
+                    const el = document.createElement('div');
+                    el.className = `customer-entity shadow-sm ${c.type.id === 'thief' ? 'customer-thief' : ''}`;
+                    
+                    const gap = 4;
+                    const tileSize = 50;
+                    // Calculated center: Tile(50) - Cust(22) = 28 / 2 = 14px offset
+                    el.style.left = (c.x * (tileSize + gap)) + 14 + 'px';
+                    el.style.top = (c.y * (tileSize + gap)) + 14 + 'px';
+                    
+                    let inner = `<span class="customer-emoji">${c.type.emoji}</span>`;
+                    
+                    // Patience Bar
+                    if(c.state === 'queueing') {
+                        const pct = (c.patience / c.maxPatience) * 100;
+                        inner += `<div class="patience-bar" style="width:${pct}%; background:${pct<30?'red':'#22c55e'}"></div>`;
+                        el.classList.add('animate-bounce');
+                    }
+
+                    el.innerHTML = inner;
+
+                    if(c.type.id === 'thief') {
+                        el.onclick = (e) => {
+                            e.stopPropagation();
+                            Actions.catchThief(c.id);
+                        }
+                        el.style.cursor = "crosshair";
+                    }
+                    
+                    grid.appendChild(el);
+                });
+            },
+
+            renderShelves: () => {
+                UI.renderGridStatic();
+                const list = document.getElementById('shelf-list');
+                list.innerHTML = '';
+                
+                State.shelves.forEach(s => {
+                    const p = s.type ? Products[s.type] : null;
+                    const div = document.createElement('div');
+                    div.className = "bg-slate-800 p-2 rounded border border-slate-700";
+                    
+                    let actions = '';
+                    if(!s.type) {
+                        const options = Object.keys(Products).map(k => {
+                            const prod = Products[k];
+                            if(prod.unlock > State.level) return '';
+                            return `<option value="${k}">${prod.name} (${prod.baseSell}₺)</option>`;
+                        }).join('');
+
+                        actions = `
+                            <select onchange="Actions.assignShelf('${s.id}', this.value)" class="bg-slate-900 text-xs rounded p-1 w-full">
+                                <option>Ürün Seç...</option>
+                                ${options}
+                            </select>
+                            <div class="text-[10px] text-slate-500 mt-1">Yeni ürünler seviye ile açılır.</div>
+                        `;
+                    } else {
+                        actions = `
+                            <div class="flex justify-between items-center mt-2 bg-slate-900 p-1 rounded">
+                                <div class="text-xs text-slate-400">Fiyat:</div>
+                                <input type="number" value="${s.price}" min="1" class="w-12 bg-slate-700 border border-slate-600 rounded text-center text-xs" onchange="Actions.setPrice('${s.id}', this.value)">
+                                <div class="text-xs font-bold text-slate-300">₺</div>
+                            </div>
+                            <button onclick="Actions.restockShelf('${s.id}')" class="w-full mt-2 bg-blue-600 text-xs py-1 rounded hover:bg-blue-500">
+                                Doldur (+${Math.min(s.max-s.stock, State.storage.items[s.type]||0)})
+                            </button>
+                        `;
+                    }
+
+                    div.innerHTML = `
+                        <div class="flex items-center gap-2 mb-2">
+                            <div class="w-8 h-8 bg-slate-700 rounded flex items-center justify-center text-lg">${p ? p.icon : '❓'}</div>
+                            <div>
+                                <div class="font-bold text-sm text-slate-300">${p ? p.name : 'Boş Raf'}</div>
+                                <div class="text-xs text-slate-500">Stok: ${s.stock}/${s.max}</div>
+                            </div>
+                        </div>
+                        ${actions}
+                    `;
+                    list.appendChild(div);
+                });
+            },
+
+            renderSupply: () => {
+                const list = document.getElementById('product-catalog');
+                list.innerHTML = '';
+                
+                let currentLoad = 0;
+                for(let k in State.storage.items) currentLoad += State.storage.items[k];
+                document.getElementById('storage-used').innerText = currentLoad;
+
+                Object.keys(Products).forEach(key => {
+                    const p = Products[key];
+                    const owned = State.storage.items[key] || 0;
+                    const locked = p.unlock > State.level;
+
+                    const el = document.createElement('div');
+                    el.className = `bg-slate-800 p-2 rounded flex justify-between items-center border ${locked ? 'border-red-900 opacity-50' : 'border-slate-700'}`;
+                    
+                    if(locked) {
+                         el.innerHTML = `
+                            <div class="flex items-center gap-2 text-slate-500">
+                                <div>🔒</div>
+                                <div class="text-xs font-bold">Seviye ${p.unlock} Gerekli</div>
+                            </div>
+                         `;
+                    } else {
+                        el.innerHTML = `
+                            <div class="flex items-center gap-2">
+                                <div class="text-xl">${p.icon}</div>
+                                <div>
+                                    <div class="font-bold text-sm">${p.name}</div>
+                                    <div class="text-xs text-slate-400">Depo: ${owned}</div>
+                                </div>
+                            </div>
+                            <button onclick="Actions.orderProduct('${key}')" class="bg-green-700 hover:bg-green-600 text-xs px-3 py-1 rounded">
+                                10x (${p.buy*10}₺)
+                            </button>
+                        `;
+                    }
+                    list.appendChild(el);
+                });
+            },
+
+            renderStaff: () => {
+                const div = document.getElementById('staff-roster');
+                div.innerHTML = '';
+                
+                const staffTypes = [
+                    { id: 'cashier', name: '🤖 Kasiyer', desc: 'Otomatik satış.', cost: 800 },
+                    { id: 'cleaner', name: '🧹 Temizlikçi', desc: 'Otomatik temizlik.', cost: 600 },
+                    { id: 'security', name: '👮 Güvenlik', desc: 'Hırsızları yakalar.', cost: 1000 }
+                ];
+
+                staffTypes.forEach(staff => {
+                    const hired = State.staff[staff.id] > 0;
+                    div.innerHTML += `
+                        <div class="bg-slate-800 p-3 rounded flex justify-between items-center border ${hired ? 'border-blue-500' : 'border-slate-700'}">
+                            <div>
+                                <div class="font-bold text-sm">${staff.name}</div>
+                                <div class="text-xs text-slate-400">${staff.desc}</div>
+                            </div>
+                             ${hired ? '<span class="text-blue-400 text-xs font-bold">Aktif</span>' : `<button onclick="Actions.hire('${staff.id}')" class="bg-blue-600 text-xs px-2 py-1 rounded">İşe Al (${staff.cost}₺)</button>`}
+                        </div>
+                    `;
+                });
+            },
+
+            renderReviews: () => {
+                const list = document.getElementById('reviews-list');
+                if(State.reviews.length === 0) return;
+                list.innerHTML = '';
+                State.reviews.forEach(r => {
+                    const el = document.createElement('div');
+                    el.className = "bg-slate-800/50 p-2 rounded border border-slate-700/50 animate-fade-in";
+                    el.innerHTML = `
+                        <div class="flex justify-between text-slate-300">
+                            <span>${r.icon}</span>
+                            <span class="text-yellow-500 text-[10px]">⭐ ${r.stars}</span>
+                        </div>
+                        <div class="text-slate-400 italic mt-1 leading-tight">"${r.text}"</div>
+                    `;
+                    list.appendChild(el);
+                });
+            },
+
+            toast: (msg, type='success') => {
+                const c = document.getElementById('toast-container');
+                const d = document.createElement('div');
+                d.className = `toast px-4 py-2 rounded shadow-lg text-xs font-bold text-white ${type==='error'?'bg-red-600':'bg-slate-700'} border-l-4 ${type==='error'?'border-red-400':'border-green-400'}`;
+                d.innerText = msg;
+                c.appendChild(d);
+                setTimeout(() => d.remove(), 3000);
+            }
+        };
+
+        Game.init();
+
+    </script>
+</body>
+</html>
